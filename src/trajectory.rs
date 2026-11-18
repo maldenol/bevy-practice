@@ -14,6 +14,10 @@ use crate::{
 
 const TRAJECTORY_LENGTH: u16 = 60 * 600;
 const TRAJECTORY_COLOR: f32 = 0.1;
+/// Minimum spacing between drawn points, so sub-pixel gizmo segments don't spike.
+const MIN_VERTEX_SPACING: f32 = 4.0;
+/// Also space points by this fraction of the distance to the central body.
+const VERTEX_SPACING_FRACTION: f32 = 0.015;
 
 #[derive(Resource, Default, Copy, Clone, PartialEq, Eq, Hash, Debug, EnumDiscriminants, EnumCount, FromRepr, VariantNames)]
 pub enum TrajectoryMode {
@@ -86,11 +90,32 @@ pub fn draw_trajectory(
         });
     }
 
+    // One central body for the whole line. Switching it later jumps the draw frame by the
+    // distance between the two bodies, which is the chord / spike in the polyline.
+    let central_bodies: Vec<(u32, Option<u32>)> = grav_predictions
+        .keys()
+        .copied()
+        .map(|entity| (entity, dominant_central_body(entity, &grav_predictions)))
+        .collect();
+    for (entity, central_index) in central_bodies {
+        let Some(central_index) = central_index else {
+            continue;
+        };
+        let grav_pred = grav_predictions.get(&entity).unwrap();
+        let central_body_pos = grav_predictions.get(&central_index).unwrap().pos;
+        let central_body_vec = grav_pred.pos - central_body_pos;
+        grav_pred.traj.set(TrajectoryParams {
+            initial_pos: grav_pred.traj.get().initial_pos,
+            central_body_index: central_index,
+            central_body_vec_initial: central_body_vec,
+            ..default()
+        });
+    }
+
     let delta_time = time.timestep().as_secs_f32();
     for iteration_index in 0..TRAJECTORY_LENGTH {
         for (entity_dst, grav_pred_dst) in &grav_predictions {
             let mut delta_vel = Vec3::ZERO;
-            let mut max_influence = (0.0, u32::MAX);
 
             for (entity_src, grav_pred_src) in &grav_predictions {
                 if grav_pred_src.mass.is_none() {
@@ -101,56 +126,32 @@ pub fn draw_trajectory(
                     continue;
                 }
 
-                let current_delta_vel = calc_delta_velocity(
+                delta_vel += calc_delta_velocity(
                     delta_time,
                     grav_pred_dst.pos,
                     grav_pred_src.pos,
                     grav_pred_src.mass.unwrap(),
                 );
-
-                let current_influence = current_delta_vel.length();
-                if max_influence.0 < current_influence && (grav_pred_dst.mass.is_none() || grav_pred_dst.mass.unwrap() < grav_pred_src.mass.unwrap()) {
-                    max_influence.0 = current_influence;
-                    max_influence.1 = *entity_src;
-                }
-
-                delta_vel += current_delta_vel;
             }
 
             let vel = &grav_pred_dst.vel;
             vel.set(vel.get() + delta_vel);
 
-            if max_influence.1 == u32::MAX {
+            let mut traj = grav_pred_dst.traj.get();
+            if traj.central_body_index == u32::MAX || traj.trajectory_length != TRAJECTORY_LENGTH {
                 continue;
             }
 
-            let central_body_pos = grav_predictions.get(&max_influence.1).unwrap().pos;
+            let central_body_pos = grav_predictions.get(&traj.central_body_index).unwrap().pos;
             let central_body_vec = grav_pred_dst.pos - central_body_pos;
-            if grav_pred_dst.traj.get().central_body_index != max_influence.1 {
-                grav_pred_dst.traj.set(TrajectoryParams {
-                    initial_pos: grav_pred_dst.traj.get().initial_pos,
-                    central_body_index: max_influence.1,
-                    central_body_vec_initial: central_body_vec,
-                    ..default()
-                });
-            } else if grav_pred_dst.traj.get().trajectory_length == TRAJECTORY_LENGTH && grav_pred_dst.traj.get().central_body_index != u32::MAX {
-                let central_body_angle = central_body_vec.angle_between(grav_pred_dst.traj.get().central_body_vec_initial);
-                if grav_pred_dst.traj.get().central_body_angle > central_body_angle {
-                    grav_pred_dst.traj.set(TrajectoryParams {
-                        central_body_angle_decreases: true,
-                        ..grav_pred_dst.traj.get()
-                    });
-                } else if grav_pred_dst.traj.get().central_body_angle_decreases {
-                    grav_pred_dst.traj.set(TrajectoryParams {
-                        trajectory_length: iteration_index + 1,
-                        ..grav_pred_dst.traj.get()
-                    });
-                }
-                grav_pred_dst.traj.set(TrajectoryParams {
-                    central_body_angle,
-                    ..grav_pred_dst.traj.get()
-                });
+            let central_body_angle = central_body_vec.angle_between(traj.central_body_vec_initial);
+            if traj.central_body_angle > central_body_angle {
+                traj.central_body_angle_decreases = true;
+            } else if traj.central_body_angle_decreases {
+                traj.trajectory_length = iteration_index + 1;
             }
+            traj.central_body_angle = central_body_angle;
+            grav_pred_dst.traj.set(traj);
         }
 
         for (_, grav_pred) in &mut grav_predictions {
@@ -158,19 +159,27 @@ pub fn draw_trajectory(
         }
 
         for (entity, grav_pred) in &grav_predictions {
-            let mut traj_pos = grav_pred.pos;
-            if grav_pred.traj.get().central_body_index != u32::MAX {
-                let central_body = grav_predictions.get(&grav_pred.traj.get().central_body_index).unwrap();
-                traj_pos -= central_body.pos;
-                traj_pos += central_body.traj.get().initial_pos;
+            let traj = grav_pred.traj.get();
+            if traj.central_body_index == u32::MAX || iteration_index >= traj.trajectory_length {
+                continue;
             }
-            polyline_vertices.get_mut(entity).unwrap().push(traj_pos);
+
+            let central_body = grav_predictions.get(&traj.central_body_index).unwrap();
+            let traj_pos = grav_pred.pos - central_body.pos + central_body.traj.get().initial_pos;
+            let radius = grav_pred.pos.distance(central_body.pos);
+            let spacing = MIN_VERTEX_SPACING.max(radius * VERTEX_SPACING_FRACTION);
+            let vertices = polyline_vertices.get_mut(entity).unwrap();
+            let closing = iteration_index + 1 == traj.trajectory_length;
+            let far_enough = vertices.last().is_none_or(|last| last.distance(traj_pos) >= spacing);
+            if far_enough || closing {
+                vertices.push(traj_pos);
+            }
         }
     }
 
     let space_camera = space_camera.into_inner();
 
-    for (entity, mut vertices) in polyline_vertices {
+    for (entity, vertices) in polyline_vertices {
         if *trajectory_mode == TrajectoryMode::Focused {
             let Some(focused_entity) = space_camera.get_look_at_entity() else {
                 continue;
@@ -181,13 +190,47 @@ pub fn draw_trajectory(
             }
         }
 
-        let trajectory_length = grav_predictions.get(&entity).unwrap().traj.get().trajectory_length as usize;
-        vertices.truncate(trajectory_length);
+        if vertices.len() < 2 {
+            continue;
+        }
 
         gizmos.primitive_3d(
             &Polyline3d{ vertices },
             Isometry3d::default(),
             Color::srgb(TRAJECTORY_COLOR, TRAJECTORY_COLOR, TRAJECTORY_COLOR),
         );
+    }
+}
+
+/// Heaviest pull from a strictly heavier body. Chosen once per prediction.
+fn dominant_central_body(
+    entity: u32,
+    bodies: &HashMap<u32, GravityPrediction>,
+) -> Option<u32> {
+    let dst_pos = bodies[&entity].pos;
+    let dst_mass = bodies[&entity].mass;
+    let mut best = (0.0_f32, u32::MAX);
+
+    for (src, other) in bodies {
+        let Some(mass) = other.mass else {
+            continue;
+        };
+        if *src == entity {
+            continue;
+        }
+        if dst_mass.is_some_and(|dst_mass| dst_mass >= mass) {
+            continue;
+        }
+
+        let influence = calc_delta_velocity(1.0, dst_pos, other.pos, mass).length();
+        if influence > best.0 {
+            best = (influence, *src);
+        }
+    }
+
+    if best.1 == u32::MAX {
+        None
+    } else {
+        Some(best.1)
     }
 }
