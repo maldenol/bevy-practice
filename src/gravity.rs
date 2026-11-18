@@ -61,69 +61,104 @@ pub fn apply_simulation_speed(
     virtual_time.set_max_delta(MAX_REAL_DELTA.mul_f64(f64::from(speed.max(1.0))));
 }
 
-pub fn update_velocity(
-    time: Res<Time>,
-    mut gravity_dst: Query<(Entity, &Transform, &mut Velocity)>,
-    gravity_src: Query<(Entity, &Transform, &Mass)>,
-) {
-    for (entity_dst, transform_dst, mut velocity_dst) in gravity_dst.iter_mut() {
-        for (entity_src, transform_src, mass_src) in gravity_src {
-            if entity_src == entity_dst {
+/// Positions and velocities copied out of the world so one step can run without ECS.
+pub struct BodySample {
+    pub id: u32,
+    pub pos: Vec3,
+    pub vel: Vec3,
+    pub mass: Option<f32>,
+}
+
+/// Semi-implicit Euler. Every acceleration uses the positions from the start of the step.
+pub fn integrate_bodies(bodies: &mut [BodySample], dt: f32) {
+    let mut delta_vels = vec![Vec3::ZERO; bodies.len()];
+
+    for (i, dst) in bodies.iter().enumerate() {
+        for src in bodies.iter() {
+            let Some(mass) = src.mass else {
+                continue;
+            };
+            if src.id == dst.id {
                 continue;
             }
 
-            let delta_velocity = calc_delta_velocity(
-                time.delta_secs(),
-                transform_dst.translation,
-                transform_src.translation,
-                mass_src.0,
-            );
-
-            velocity_dst.0 += delta_velocity;
+            delta_vels[i] += calc_delta_velocity(dt, dst.pos, src.pos, mass);
         }
+    }
+
+    for (body, delta_vel) in bodies.iter_mut().zip(delta_vels) {
+        body.vel += delta_vel;
+        body.pos += body.vel * dt;
     }
 }
 
-pub fn update_position(
+/// Heaviest pull from a strictly heavier body.
+pub fn dominant_central_body(bodies: &[BodySample], id: u32) -> Option<u32> {
+    let dst = bodies.iter().find(|body| body.id == id)?;
+    let mut best = (0.0_f32, u32::MAX);
+
+    for other in bodies {
+        let Some(mass) = other.mass else {
+            continue;
+        };
+        if other.id == id {
+            continue;
+        }
+        if dst.mass.is_some_and(|dst_mass| dst_mass >= mass) {
+            continue;
+        }
+
+        let influence = calc_delta_velocity(1.0, dst.pos, other.pos, mass).length();
+        if influence > best.0 {
+            best = (influence, other.id);
+        }
+    }
+
+    if best.1 == u32::MAX {
+        None
+    } else {
+        Some(best.1)
+    }
+}
+
+pub fn simulate_gravity(
     time: Res<Time>,
-    mut query: Query<(&mut Transform, &Velocity)>,
+    mut query: Query<(Entity, &mut Transform, &mut Velocity, Option<&Mass>)>,
 ) {
-    for (mut transform, velocity) in query.iter_mut() {
-        transform.translation += velocity.0 * time.delta_secs();
+    let mut bodies: Vec<BodySample> = query
+        .iter()
+        .map(|(entity, transform, velocity, mass)| BodySample {
+            id: entity.index_u32(),
+            pos: transform.translation,
+            vel: velocity.0,
+            mass: mass.map(|mass| mass.0),
+        })
+        .collect();
+
+    integrate_bodies(&mut bodies, time.delta_secs());
+
+    for (entity, mut transform, mut velocity, _) in &mut query {
+        let body = bodies.iter().find(|body| body.id == entity.index_u32()).unwrap();
+        transform.translation = body.pos;
+        velocity.0 = body.vel;
     }
 }
 
 pub fn update_central_body(
-    mut gravity_dst: Query<(Entity, &Transform, Option<&Mass>, &mut CentralBody)>,
-    gravity_src: Query<(Entity, &Transform, &Mass)>,
+    mut query: Query<(Entity, &Transform, Option<&Mass>, &mut CentralBody)>,
 ) {
-    for (entity_dst, transform_dst, mass_dst, mut central_body_dst) in gravity_dst.iter_mut() {
-        let mut max_influence = (0.0, u32::MAX);
+    let bodies: Vec<BodySample> = query
+        .iter()
+        .map(|(entity, transform, mass, _)| BodySample {
+            id: entity.index_u32(),
+            pos: transform.translation,
+            vel: Vec3::ZERO,
+            mass: mass.map(|mass| mass.0),
+        })
+        .collect();
 
-        for (entity_src, transform_src, mass_src) in gravity_src {
-            if entity_src == entity_dst {
-                continue;
-            }
-
-            if mass_dst.is_some() && mass_dst.unwrap().0 > mass_src.0 {
-                continue;
-            }
-
-            let delta_velocity = calc_delta_velocity(
-                1.0,
-                transform_dst.translation,
-                transform_src.translation,
-                mass_src.0,
-            );
-
-            let current_influence = delta_velocity.length();
-            if max_influence.0 < current_influence {
-                max_influence.0 = current_influence;
-                max_influence.1 = entity_src.index_u32();
-            }
-        }
-
-        central_body_dst.0 = max_influence.1;
+    for (entity, _, _, mut central_body) in &mut query {
+        central_body.0 = dominant_central_body(&bodies, entity.index_u32()).unwrap_or(u32::MAX);
     }
 }
 

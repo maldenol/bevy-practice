@@ -48,9 +48,8 @@ fn main() {
             handle_mouse_input,
         ).chain())
         .add_systems(FixedUpdate, (
-            update_velocity.run_if(in_state(SimulationState::Running)),
-            update_position.run_if(in_state(SimulationState::Running)),
-        ).chain())
+            simulate_gravity.run_if(in_state(SimulationState::Running)),
+        ))
         .add_systems(Update, (
             update_central_body.run_if(in_state(SimulationState::Running)),
             update_camera,
