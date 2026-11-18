@@ -9,6 +9,7 @@ mod ui;
 
 use bevy::{
     prelude::*,
+    time::TimeSystems,
     ui_widgets::SliderPlugin,
 };
 
@@ -41,6 +42,7 @@ fn main() {
             startup_hud,
             spawn_planets,
         ).chain())
+        .add_systems(First, apply_simulation_speed.before(TimeSystems))
         .add_systems(PreUpdate, (
             handle_keyboard_input,
             handle_mouse_input,

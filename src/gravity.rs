@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use bevy::{
     math::*,
     prelude::*,
@@ -35,6 +37,28 @@ pub fn startup_gravity(
     mut commands: Commands,
 ) {
     commands.insert_resource(SimulationSpeed::default());
+}
+
+/// Bevy drops virtual time beyond this much real time so a hitch cannot spiral.
+const MAX_REAL_DELTA: Duration = Duration::from_millis(250);
+
+/// Speeds the fixed loop up or down without changing the size of a tick.
+///
+/// `Time<Fixed>` stays at 60 Hz, so every tick is 1/60 of a second. `SimulationSpeed`
+/// scales virtual time, which changes how many of those ticks run per real second.
+pub fn apply_simulation_speed(
+    simulation_speed: Res<SimulationSpeed>,
+    simulation_state: Res<State<SimulationState>>,
+    mut virtual_time: ResMut<Time<Virtual>>,
+) {
+    let speed = if *simulation_state.get() == SimulationState::Running {
+        simulation_speed.0
+    } else {
+        0.0
+    };
+
+    virtual_time.set_relative_speed(speed);
+    virtual_time.set_max_delta(MAX_REAL_DELTA.mul_f64(f64::from(speed.max(1.0))));
 }
 
 pub fn update_velocity(
