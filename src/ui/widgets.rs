@@ -2,13 +2,18 @@ use bevy::{
     picking::hover::Hovered,
     platform::collections::HashMap,
     prelude::*,
-    ui_widgets::{CoreSliderDragState, observe, Slider, SliderRange, SliderThumb, SliderValue, slider_self_update, TrackClick},
+    ui_widgets::{
+        CoreSliderDragState, Slider, SliderPlugin, SliderRange, SliderThumb, SliderValue,
+        TrackClick, observe, slider_self_update,
+    },
 };
+
+use crate::app::AppSet;
 
 #[derive(Component, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TextId(&'static str);
 
-#[derive(Resource)]
+#[derive(Resource, Default)]
 pub struct TextTable(HashMap<TextId, String>);
 
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
@@ -49,9 +54,7 @@ pub struct SliderStyle {
     pub track: UiColorStyle,
 }
 
-pub fn container_node(
-    flex_direction: FlexDirection,
-) -> Node {
+pub fn container_node(flex_direction: FlexDirection) -> Node {
     Node {
         flex_direction,
         justify_content: JustifyContent::FlexStart,
@@ -60,10 +63,7 @@ pub fn container_node(
     }
 }
 
-pub fn text_bundle(
-    id: &'static str,
-    text_style: TextStyle,
-) -> impl Bundle {
+pub fn text_bundle(id: &'static str, text_style: TextStyle) -> impl Bundle {
     (
         TextId(id),
         Text::default(),
@@ -72,10 +72,7 @@ pub fn text_bundle(
     )
 }
 
-pub fn button_bundle(
-    id: &'static str,
-    button_style: &ButtonStyle,
-) -> impl Bundle {
+pub fn button_bundle(id: &'static str, button_style: &ButtonStyle) -> impl Bundle {
     (
         Node {
             width: px(150),
@@ -91,16 +88,11 @@ pub fn button_bundle(
         Button,
         BackgroundColor(button_style.background.normal),
         *button_style,
-        children![
-            text_bundle(id, TextStyle(button_style.text)),
-        ],
+        children![text_bundle(id, TextStyle(button_style.text)),],
     )
 }
 
-pub fn slider_bundle(
-    id: &'static str,
-    slider_style: &SliderStyle,
-) -> impl Bundle {
+pub fn slider_bundle(id: &'static str, slider_style: &SliderStyle) -> impl Bundle {
     (
         Node {
             width: px(150),
@@ -140,42 +132,45 @@ pub fn slider_bundle(
                     display: Display::Flex,
                     ..default()
                 },
-                children![
-                    (
-                        Node {
-                            position_type: PositionType::Absolute,
-                            left: percent(0),
-                            top: px(9),
-                            width: px(12),
-                            height: px(12),
-                            display: Display::Flex,
-                            border_radius: BorderRadius::MAX,
-                            ..default()
-                        },
-                        SliderThumb,
-                        BackgroundColor(slider_style.thumb.normal),
-                    ),
-                ],
+                children![(
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: percent(0),
+                        top: px(9),
+                        width: px(12),
+                        height: px(12),
+                        display: Display::Flex,
+                        border_radius: BorderRadius::MAX,
+                        ..default()
+                    },
+                    SliderThumb,
+                    BackgroundColor(slider_style.thumb.normal),
+                ),],
             ),
         ],
     )
 }
 
-pub fn set_text(
-    id: &'static str,
-    text: String,
-    text_table: &mut ResMut<TextTable>,
-) {
+pub fn set_text(id: &'static str, text: String, text_table: &mut ResMut<TextTable>) {
     text_table.0.entry(TextId(id)).insert(text);
 }
 
-pub fn startup_ui(
-    mut commands: Commands,
-) {
-    commands.insert_resource(TextTable(default()));
+pub struct UiPlugin;
+
+impl Plugin for UiPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins(SliderPlugin)
+            .init_resource::<TextTable>()
+            .add_systems(
+                Update,
+                (update_ui_buttons, update_ui_sliders, update_ui_text)
+                    .chain()
+                    .in_set(AppSet::Ui),
+            );
+    }
 }
 
-pub fn update_ui_buttons(
+fn update_ui_buttons(
     mut commands: Commands,
     mut button_query: Query<
         (
@@ -187,27 +182,25 @@ pub fn update_ui_buttons(
             &ButtonStyle,
             &Children,
         ),
-        Changed<Interaction>
+        Changed<Interaction>,
     >,
-    mut button_text_query: Query<
-        (
-            &mut TextColor,
-        ),
-    >,
+    mut button_text_query: Query<(&mut TextColor,)>,
 ) {
-    for (interaction, button_id, mut button_press_state, mut button, mut background_color, button_style, children) in &mut button_query
+    for (
+        interaction,
+        button_id,
+        mut button_press_state,
+        mut button,
+        mut background_color,
+        button_style,
+        children,
+    ) in &mut button_query
     {
         let (mut button_text_color,) = button_text_query.get_mut(children[0]).unwrap();
         (background_color.0, button_text_color.0) = match *interaction {
-            Interaction::Pressed => {
-                (button_style.background.pressed, button_style.text.pressed)
-            }
-            Interaction::Hovered => {
-                (button_style.background.hovered, button_style.text.hovered)
-            }
-            Interaction::None => {
-                (button_style.background.normal, button_style.text.normal)
-            }
+            Interaction::Pressed => (button_style.background.pressed, button_style.text.pressed),
+            Interaction::Hovered => (button_style.background.hovered, button_style.text.hovered),
+            Interaction::None => (button_style.background.normal, button_style.text.normal),
         };
         button.set_changed();
 
@@ -220,7 +213,7 @@ pub fn update_ui_buttons(
     }
 }
 
-pub fn update_ui_sliders(
+fn update_ui_sliders(
     mut commands: Commands,
     slider_query: Query<
         (
@@ -243,9 +236,20 @@ pub fn update_ui_sliders(
     children: Query<&Children>,
     mut slider_thumb_query: Query<(&mut Node, &mut BackgroundColor), With<SliderThumb>>,
 ) {
-    for (entity, slider_id, slider_value, slider_range, slider_drag_state, slider_hovered, slider_style) in slider_query.iter() {
+    for (
+        entity,
+        slider_id,
+        slider_value,
+        slider_range,
+        slider_drag_state,
+        slider_hovered,
+        slider_style,
+    ) in slider_query.iter()
+    {
         for child in children.iter_descendants(entity) {
-            if let Ok((mut slider_thumb_node, mut slider_thumb_color)) = slider_thumb_query.get_mut(child) {
+            if let Ok((mut slider_thumb_node, mut slider_thumb_color)) =
+                slider_thumb_query.get_mut(child)
+            {
                 let pressed = slider_drag_state.dragging;
                 slider_thumb_color.0 = if pressed {
                     slider_style.thumb.pressed
@@ -257,7 +261,8 @@ pub fn update_ui_sliders(
                     }
                 };
 
-                slider_thumb_node.left = percent(slider_range.thumb_position(slider_value.0) * 100.0);
+                slider_thumb_node.left =
+                    percent(slider_range.thumb_position(slider_value.0) * 100.0);
 
                 commands.trigger(SliderEvent(*slider_id, slider_value.0));
             }
@@ -265,15 +270,7 @@ pub fn update_ui_sliders(
     }
 }
 
-pub fn update_ui_text(
-    mut text_query: Query<
-        (
-            &TextId,
-            &mut Text,
-        )
-    >,
-    mut text_table: ResMut<TextTable>,
-) {
+fn update_ui_text(mut text_query: Query<(&TextId, &mut Text)>, mut text_table: ResMut<TextTable>) {
     if text_table.0.is_empty() {
         return;
     }

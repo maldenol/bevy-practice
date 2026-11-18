@@ -5,18 +5,33 @@ use bevy::{
     mesh::MeshVertexBufferLayoutRef,
     pbr::{MaterialPipeline, MaterialPipelineKey},
     prelude::*,
-    render::render_resource::{AsBindGroup, RenderPipelineDescriptor, SpecializedMeshPipelineError},
+    render::render_resource::{
+        AsBindGroup, RenderPipelineDescriptor, SpecializedMeshPipelineError,
+    },
     shader::ShaderRef,
 };
 use encase::ShaderType;
 use strum::{EnumCount, EnumDiscriminants, FromRepr, VariantNames};
 
 use crate::{
+    app::{AppSet, StartupSet},
     camera::SpaceCamera,
-    gravity::{GRAVITY_CONSTANT, Mass, Velocity, CentralBody},
+    simulation::{CentralBody, GRAVITY_CONSTANT, Mass, SimulationState, Velocity},
 };
 
-#[derive(Default, Copy, Clone, PartialEq, Eq, Hash, Debug, EnumDiscriminants, EnumCount, FromRepr, VariantNames)]
+#[derive(
+    Default,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    Debug,
+    EnumDiscriminants,
+    EnumCount,
+    FromRepr,
+    VariantNames,
+)]
 #[allow(unused)]
 pub enum GridMode {
     #[default]
@@ -87,7 +102,22 @@ impl Material for GridMaterial {
     }
 }
 
-pub fn startup_grid(
+pub struct GridPlugin;
+
+impl Plugin for GridPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins(MaterialPlugin::<GridMaterial>::default())
+            .add_systems(Startup, startup_grid.in_set(StartupSet::Scene))
+            .add_systems(
+                Update,
+                update_grid
+                    .run_if(in_state(SimulationState::Running))
+                    .in_set(AppSet::View),
+            );
+    }
+}
+
+fn startup_grid(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<GridMaterial>>,
@@ -101,7 +131,7 @@ pub fn startup_grid(
     ));
 }
 
-pub fn update_grid(
+fn update_grid(
     camera: Single<(&Transform, &SpaceCamera)>,
     gravity_src: Query<(Entity, &Transform, Option<&Velocity>, &Mass, &CentralBody)>,
     mut materials: ResMut<Assets<GridMaterial>>,
@@ -125,7 +155,7 @@ pub fn update_grid(
         };
         *index += 1;
 
-        if mat.gravity_src_buffer.max_mass < mass.0{
+        if mat.gravity_src_buffer.max_mass < mass.0 {
             mat.gravity_src_buffer.max_mass = mass.0;
             mat.gravity_src_buffer.max_mass_radius = transform.scale.x / 2.0;
         }

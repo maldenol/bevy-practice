@@ -1,10 +1,8 @@
-use bevy::{
-    camera::visibility::NoFrustumCulling,
-    math::*,
-    prelude::*,
-};
+use bevy::{camera::visibility::NoFrustumCulling, math::*, prelude::*};
 
-use crate::gravity::{Velocity, Mass, CentralBody};
+use super::gravity::{CentralBody, Mass, Velocity};
+
+use crate::app::StartupSet;
 
 struct PlanetParams {
     translation: Vec3,
@@ -19,7 +17,15 @@ struct StarParams {
     light_intensity: f32,
 }
 
-pub fn spawn_planets(
+pub struct PlanetsPlugin;
+
+impl Plugin for PlanetsPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(Startup, spawn_planets.in_set(StartupSet::Scene));
+    }
+}
+
+fn spawn_planets(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -32,7 +38,7 @@ pub fn spawn_planets(
             scale: 10.0,
             velocity: Vec3::ZERO,
             mass: 1_000.0,
-            material: materials.add(StandardMaterial{
+            material: materials.add(StandardMaterial {
                 base_color: Color::srgb(1.0, 1.0, 0.0),
                 perceptual_roughness: 1.0,
                 emissive: LinearRgba::rgb(100.0, 100.0, 0.0),
@@ -107,12 +113,10 @@ pub fn spawn_planets(
     ));
 }
 
-fn planet_bundle(
-    planet_params: &PlanetParams,
-    mesh: Handle<Mesh>,
-) -> impl Bundle {
+fn planet_bundle(planet_params: &PlanetParams, mesh: Handle<Mesh>) -> impl Bundle {
     (
-        Transform::from_translation(planet_params.translation).with_scale(Vec3::splat(planet_params.scale)),
+        Transform::from_translation(planet_params.translation)
+            .with_scale(Vec3::splat(planet_params.scale)),
         Velocity(planet_params.velocity),
         Mass(planet_params.mass),
         CentralBody::default(),
@@ -128,7 +132,7 @@ fn star_bundle(
 ) -> impl Bundle {
     (
         planet_bundle(planet_params, mesh),
-        PointLight{
+        PointLight {
             range: star_params.light_range,
             intensity: star_params.light_intensity,
             ..default()

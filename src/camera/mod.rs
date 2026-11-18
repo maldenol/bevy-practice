@@ -1,9 +1,13 @@
-use bevy::{
-    math::*,
-    prelude::*,
-};
+mod input;
 
-use crate::gravity::Velocity;
+use bevy::{math::*, prelude::*};
+
+use input::{handle_keyboard_input, handle_mouse_input};
+
+use crate::{
+    app::{AppSet, StartupSet},
+    simulation::Velocity,
+};
 
 #[derive(Component)]
 pub struct SpaceCamera {
@@ -42,9 +46,20 @@ impl SpaceCamera {
     }
 }
 
-pub fn startup_camera(
-    mut commands: Commands,
-) {
+pub struct CameraPlugin;
+
+impl Plugin for CameraPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(Startup, startup_camera.in_set(StartupSet::Scene))
+            .add_systems(
+                PreUpdate,
+                (handle_keyboard_input, handle_mouse_input).chain(),
+            )
+            .add_systems(Update, update_camera.in_set(AppSet::Camera));
+    }
+}
+
+fn startup_camera(mut commands: Commands) {
     commands.spawn((
         Transform::from_translation(Vec3::new(0.0, 300.0, 300.0)).looking_at(Vec3::ZERO, Vec3::Z),
         Camera3d::default(),
@@ -52,7 +67,7 @@ pub fn startup_camera(
     ));
 }
 
-pub fn update_camera(
+fn update_camera(
     camera: Single<(&mut Transform, &mut SpaceCamera)>,
     other_entities: Query<(Entity, &Transform), (Without<SpaceCamera>, With<Velocity>)>,
 ) {

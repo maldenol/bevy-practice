@@ -1,10 +1,9 @@
 use std::time::Duration;
 
-use bevy::{
-    math::*,
-    prelude::*,
-};
+use bevy::{math::*, prelude::*, time::TimeSystems};
 use strum::{EnumCount, EnumDiscriminants, FromRepr, VariantNames};
+
+use crate::app::AppSet;
 
 pub const GRAVITY_CONSTANT: f32 = 100.0;
 
@@ -17,7 +16,20 @@ pub struct Mass(pub f32);
 #[derive(Component, Default)]
 pub struct CentralBody(pub u32);
 
-#[derive(States, Default, Copy, Clone, PartialEq, Eq, Hash, Debug, EnumDiscriminants, EnumCount, FromRepr, VariantNames)]
+#[derive(
+    States,
+    Default,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    Debug,
+    EnumDiscriminants,
+    EnumCount,
+    FromRepr,
+    VariantNames,
+)]
 pub enum SimulationState {
     #[default]
     Paused,
@@ -33,10 +45,25 @@ impl Default for SimulationSpeed {
     }
 }
 
-pub fn startup_gravity(
-    mut commands: Commands,
-) {
-    commands.insert_resource(SimulationSpeed::default());
+pub struct GravityPlugin;
+
+impl Plugin for GravityPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_state::<SimulationState>()
+            .init_resource::<SimulationSpeed>()
+            .insert_resource(Time::<Fixed>::from_hz(60.0))
+            .add_systems(First, apply_simulation_speed.before(TimeSystems))
+            .add_systems(
+                FixedUpdate,
+                simulate_gravity.run_if(in_state(SimulationState::Running)),
+            )
+            .add_systems(
+                Update,
+                update_central_body
+                    .run_if(in_state(SimulationState::Running))
+                    .in_set(AppSet::Simulation),
+            );
+    }
 }
 
 /// Bevy drops virtual time beyond this much real time so a hitch cannot spiral.
@@ -46,7 +73,7 @@ const MAX_REAL_DELTA: Duration = Duration::from_millis(250);
 ///
 /// `Time<Fixed>` stays at 60 Hz, so every tick is 1/60 of a second. `SimulationSpeed`
 /// scales virtual time, which changes how many of those ticks run per real second.
-pub fn apply_simulation_speed(
+fn apply_simulation_speed(
     simulation_speed: Res<SimulationSpeed>,
     simulation_state: Res<State<SimulationState>>,
     mut virtual_time: ResMut<Time<Virtual>>,
@@ -121,7 +148,7 @@ pub fn dominant_central_body(bodies: &[BodySample], id: u32) -> Option<u32> {
     }
 }
 
-pub fn simulate_gravity(
+fn simulate_gravity(
     time: Res<Time>,
     mut query: Query<(Entity, &mut Transform, &mut Velocity, Option<&Mass>)>,
 ) {
@@ -138,15 +165,16 @@ pub fn simulate_gravity(
     integrate_bodies(&mut bodies, time.delta_secs());
 
     for (entity, mut transform, mut velocity, _) in &mut query {
-        let body = bodies.iter().find(|body| body.id == entity.index_u32()).unwrap();
+        let body = bodies
+            .iter()
+            .find(|body| body.id == entity.index_u32())
+            .unwrap();
         transform.translation = body.pos;
         velocity.0 = body.vel;
     }
 }
 
-pub fn update_central_body(
-    mut query: Query<(Entity, &Transform, Option<&Mass>, &mut CentralBody)>,
-) {
+fn update_central_body(mut query: Query<(Entity, &Transform, Option<&Mass>, &mut CentralBody)>) {
     let bodies: Vec<BodySample> = query
         .iter()
         .map(|(entity, transform, mass, _)| BodySample {
@@ -162,12 +190,7 @@ pub fn update_central_body(
     }
 }
 
-pub fn calc_delta_velocity(
-    delta_time: f32,
-    pos_dst: Vec3,
-    pos_src: Vec3,
-    mass_src: f32
-) -> Vec3 {
+pub fn calc_delta_velocity(delta_time: f32, pos_dst: Vec3, pos_src: Vec3, mass_src: f32) -> Vec3 {
     let dist2 = pos_src.distance_squared(pos_dst);
     let accel = GRAVITY_CONSTANT * mass_src / dist2;
     let dir = (pos_src - pos_dst).normalize();

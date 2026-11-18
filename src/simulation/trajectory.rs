@@ -1,13 +1,9 @@
-use bevy::{
-    math::*,
-    prelude::*
-};
+use bevy::{math::*, prelude::*};
 use strum::{EnumCount, EnumDiscriminants, FromRepr, VariantNames};
 
-use crate::{
-    camera::SpaceCamera,
-    gravity::{BodySample, Mass, Velocity, dominant_central_body, integrate_bodies},
-};
+use crate::{app::AppSet, camera::SpaceCamera};
+
+use super::gravity::{BodySample, Mass, Velocity, dominant_central_body, integrate_bodies};
 
 const TRAJECTORY_LENGTH: u16 = 60 * 600;
 const TRAJECTORY_COLOR: f32 = 0.1;
@@ -16,7 +12,20 @@ const MIN_VERTEX_SPACING: f32 = 4.0;
 /// Also space points by this fraction of the distance to the central body.
 const VERTEX_SPACING_FRACTION: f32 = 0.015;
 
-#[derive(Resource, Default, Copy, Clone, PartialEq, Eq, Hash, Debug, EnumDiscriminants, EnumCount, FromRepr, VariantNames)]
+#[derive(
+    Resource,
+    Default,
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    Debug,
+    EnumDiscriminants,
+    EnumCount,
+    FromRepr,
+    VariantNames,
+)]
 pub enum TrajectoryMode {
     None,
     Focused,
@@ -45,16 +54,19 @@ impl Default for TrajectoryParams {
     }
 }
 
-pub fn startup_trajectory(
-    mut commands: Commands,
-) {
-    commands.insert_resource(TrajectoryMode::default());
+pub struct TrajectoryPlugin;
+
+impl Plugin for TrajectoryPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<TrajectoryMode>()
+            .add_systems(Update, draw_trajectory.in_set(AppSet::View));
+    }
 }
 
-pub fn draw_trajectory(
+fn draw_trajectory(
     mut gizmos: Gizmos,
     query: Query<(Entity, &Transform, &Velocity, Option<&Mass>)>,
-    time: Res<Time::<Fixed>>,
+    time: Res<Time<Fixed>>,
     trajectory_mode: Res<TrajectoryMode>,
     space_camera: Single<&SpaceCamera>,
 ) {
@@ -87,7 +99,10 @@ pub fn draw_trajectory(
         let Some(central_id) = dominant_central_body(&bodies, bodies[i].id) else {
             continue;
         };
-        let central_slot = bodies.iter().position(|body| body.id == central_id).unwrap();
+        let central_slot = bodies
+            .iter()
+            .position(|body| body.id == central_id)
+            .unwrap();
         central_slots[i] = Some(central_slot);
         trajs[i].central_body_vec_initial = bodies[i].pos - bodies[central_slot].pos;
     }
@@ -105,7 +120,8 @@ pub fn draw_trajectory(
             }
 
             let central_body_vec = bodies[i].pos - bodies[central_slot].pos;
-            let central_body_angle = central_body_vec.angle_between(trajs[i].central_body_vec_initial);
+            let central_body_angle =
+                central_body_vec.angle_between(trajs[i].central_body_vec_initial);
             if trajs[i].central_body_angle > central_body_angle {
                 trajs[i].central_body_angle_decreases = true;
             } else if trajs[i].central_body_angle_decreases {
@@ -122,12 +138,15 @@ pub fn draw_trajectory(
                 continue;
             }
 
-            let traj_pos = bodies[i].pos - bodies[central_slot].pos + trajs[central_slot].initial_pos;
+            let traj_pos =
+                bodies[i].pos - bodies[central_slot].pos + trajs[central_slot].initial_pos;
             let radius = bodies[i].pos.distance(bodies[central_slot].pos);
             let spacing = MIN_VERTEX_SPACING.max(radius * VERTEX_SPACING_FRACTION);
             let vertices = &mut polyline_vertices[i];
             let closing = iteration_index + 1 == trajs[i].trajectory_length;
-            let far_enough = vertices.last().is_none_or(|last| last.distance(traj_pos) >= spacing);
+            let far_enough = vertices
+                .last()
+                .is_none_or(|last| last.distance(traj_pos) >= spacing);
             if far_enough || closing {
                 vertices.push(traj_pos);
             }
@@ -152,7 +171,7 @@ pub fn draw_trajectory(
         }
 
         gizmos.primitive_3d(
-            &Polyline3d{ vertices },
+            &Polyline3d { vertices },
             Isometry3d::default(),
             Color::srgb(TRAJECTORY_COLOR, TRAJECTORY_COLOR, TRAJECTORY_COLOR),
         );

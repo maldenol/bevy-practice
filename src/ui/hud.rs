@@ -4,25 +4,29 @@ use bevy::prelude::*;
 use strum::{EnumCount, VariantNames};
 
 use crate::{
-    gravity::{GRAVITY_CONSTANT, SimulationSpeed, SimulationState},
+    app::StartupSet,
     grid::{GridMaterial, GridMode},
-    trajectory::TrajectoryMode,
-    ui::*,
+    simulation::{GRAVITY_CONSTANT, SimulationSpeed, SimulationState, TrajectoryMode},
 };
 
-pub const TEXT_STYLE_PRESET_1: TextStyle = TextStyle(UiColorStyle {
+use super::widgets::{
+    ButtonEvent, ButtonId, ButtonStyle, SliderEvent, SliderId, SliderStyle, TextStyle, TextTable,
+    UiColorStyle, button_bundle, container_node, set_text, slider_bundle, text_bundle,
+};
+
+const TEXT_STYLE_PRESET_1: TextStyle = TextStyle(UiColorStyle {
     disabled: Color::srgb(0.5, 0.5, 0.5),
     normal: Color::srgb(1.0, 1.0, 1.0),
     hovered: Color::srgb(1.0, 1.0, 1.0),
     pressed: Color::srgb(1.0, 1.0, 1.0),
 });
-pub const TEXT_STYLE_PRESET_2: TextStyle = TextStyle(UiColorStyle {
+const TEXT_STYLE_PRESET_2: TextStyle = TextStyle(UiColorStyle {
     disabled: Color::srgb(0.0, 0.3, 0.0),
     normal: Color::srgb(0.0, 1.0, 0.0),
     hovered: Color::srgb(0.0, 0.7, 0.0),
     pressed: Color::srgb(0.0, 0.5, 0.0),
 });
-pub const BUTTON_STYLE_PRESET_1: ButtonStyle = ButtonStyle {
+const BUTTON_STYLE_PRESET_1: ButtonStyle = ButtonStyle {
     background: UiColorStyle {
         disabled: Color::srgb(0.3, 0.3, 0.3),
         normal: Color::srgb(0.1, 0.2, 0.3),
@@ -31,7 +35,7 @@ pub const BUTTON_STYLE_PRESET_1: ButtonStyle = ButtonStyle {
     },
     text: TEXT_STYLE_PRESET_2.0,
 };
-pub const SLIDER_STYLE_PRESET_1: SliderStyle = SliderStyle {
+const SLIDER_STYLE_PRESET_1: SliderStyle = SliderStyle {
     thumb: UiColorStyle {
         disabled: Color::srgb(0.5, 0.5, 0.5),
         normal: Color::srgb(0.1, 0.2, 0.3),
@@ -62,7 +66,17 @@ const SIMULATION_SPEED_MAX: f32 = 50.0;
 const LAGRANGE_THRESHOLD_MIN: f32 = 0.000_000_001;
 const LAGRANGE_THRESHOLD_MAX: f32 = 0.000_001;
 
-pub fn startup_hud(
+pub struct HudPlugin;
+
+impl Plugin for HudPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(Startup, startup_hud.in_set(StartupSet::Hud))
+            .add_observer(button_observer)
+            .add_observer(slider_observer);
+    }
+}
+
+fn startup_hud(
     mut commands: Commands,
     mut text_table: ResMut<TextTable>,
     simulation_state: Res<State<SimulationState>>,
@@ -79,68 +93,84 @@ pub fn startup_hud(
             align_items: AlignItems::FlexStart,
             ..container_node(FlexDirection::Row)
         },
-        children![
-            (
-                Node {
-                    width: percent(20.0),
-                    height: percent(50.0),
-                    padding: UiRect::all(px(5)),
-                    border_radius: BorderRadius::all(px(5)),
-                    row_gap: px(5),
-                    ..container_node(FlexDirection::Column)
-                },
-                BackgroundColor(Color::srgba(0.4, 0.5, 0.6, 0.7)),
-                children![
-                    (
-                        container_node(FlexDirection::Row),
-                        children![
-                            text_bundle(SIMULATION_STATE_TEXT_ID, TEXT_STYLE_PRESET_1),
-                            button_bundle(SIMULATION_STATE_BUTTON_ID, &BUTTON_STYLE_PRESET_1),
-                        ],
-                    ),
-                    (
-                        container_node(FlexDirection::Row),
-                        children![
-                            text_bundle(SIMULATION_SPEED_TEXT_ID, TEXT_STYLE_PRESET_1),
-                            slider_bundle(SIMULATION_SPEED_SLIDER_ID, &SLIDER_STYLE_PRESET_1),
-                        ],
-                    ),
-                    (
-                        container_node(FlexDirection::Row),
-                        children![
-                            text_bundle(TRAJECTORY_MODE_TEXT_ID, TEXT_STYLE_PRESET_1),
-                            button_bundle(TRAJECTORY_MODE_BUTTON_ID, &BUTTON_STYLE_PRESET_1),
-                        ],
-                    ),
-                    (
-                        container_node(FlexDirection::Row),
-                        children![
-                            text_bundle(GRID_MODE_TEXT_ID, TEXT_STYLE_PRESET_1),
-                            button_bundle(GRID_MODE_BUTTON_ID, &BUTTON_STYLE_PRESET_1),
-                        ],
-                    ),
-                    (
-                        container_node(FlexDirection::Row),
-                        children![
-                            text_bundle(LAGRANGE_THRESHOLD_TEXT_ID, TEXT_STYLE_PRESET_1),
-                            slider_bundle(LAGRANGE_THRESHOLD_SLIDER_ID, &SLIDER_STYLE_PRESET_1),
-                        ],
-                    ),
-                ],
-            ),
-        ],
+        children![(
+            Node {
+                width: percent(20.0),
+                height: percent(50.0),
+                padding: UiRect::all(px(5)),
+                border_radius: BorderRadius::all(px(5)),
+                row_gap: px(5),
+                ..container_node(FlexDirection::Column)
+            },
+            BackgroundColor(Color::srgba(0.4, 0.5, 0.6, 0.7)),
+            children![
+                (
+                    container_node(FlexDirection::Row),
+                    children![
+                        text_bundle(SIMULATION_STATE_TEXT_ID, TEXT_STYLE_PRESET_1),
+                        button_bundle(SIMULATION_STATE_BUTTON_ID, &BUTTON_STYLE_PRESET_1),
+                    ],
+                ),
+                (
+                    container_node(FlexDirection::Row),
+                    children![
+                        text_bundle(SIMULATION_SPEED_TEXT_ID, TEXT_STYLE_PRESET_1),
+                        slider_bundle(SIMULATION_SPEED_SLIDER_ID, &SLIDER_STYLE_PRESET_1),
+                    ],
+                ),
+                (
+                    container_node(FlexDirection::Row),
+                    children![
+                        text_bundle(TRAJECTORY_MODE_TEXT_ID, TEXT_STYLE_PRESET_1),
+                        button_bundle(TRAJECTORY_MODE_BUTTON_ID, &BUTTON_STYLE_PRESET_1),
+                    ],
+                ),
+                (
+                    container_node(FlexDirection::Row),
+                    children![
+                        text_bundle(GRID_MODE_TEXT_ID, TEXT_STYLE_PRESET_1),
+                        button_bundle(GRID_MODE_BUTTON_ID, &BUTTON_STYLE_PRESET_1),
+                    ],
+                ),
+                (
+                    container_node(FlexDirection::Row),
+                    children![
+                        text_bundle(LAGRANGE_THRESHOLD_TEXT_ID, TEXT_STYLE_PRESET_1),
+                        slider_bundle(LAGRANGE_THRESHOLD_SLIDER_ID, &SLIDER_STYLE_PRESET_1),
+                    ],
+                ),
+            ],
+        ),],
     ));
 
-    commands.add_observer(button_observer);
-    commands.add_observer(slider_observer);
-
-    set_text(SIMULATION_STATE_TEXT_ID, "Sim state: ".into(), &mut text_table);
-    set_text(SIMULATION_SPEED_TEXT_ID, "Sim speed: ".into(), &mut text_table);
-    set_text(TRAJECTORY_MODE_TEXT_ID, "Traj mode: ".into(), &mut text_table);
+    set_text(
+        SIMULATION_STATE_TEXT_ID,
+        "Sim state: ".into(),
+        &mut text_table,
+    );
+    set_text(
+        SIMULATION_SPEED_TEXT_ID,
+        "Sim speed: ".into(),
+        &mut text_table,
+    );
+    set_text(
+        TRAJECTORY_MODE_TEXT_ID,
+        "Traj mode: ".into(),
+        &mut text_table,
+    );
     set_text(GRID_MODE_TEXT_ID, "Grid mode: ".into(), &mut text_table);
-    set_text(LAGRANGE_THRESHOLD_TEXT_ID, "Threshold: ".into(), &mut text_table);
+    set_text(
+        LAGRANGE_THRESHOLD_TEXT_ID,
+        "Threshold: ".into(),
+        &mut text_table,
+    );
 
-    set_next_simulation_state(true, &mut text_table, &simulation_state, &mut next_simulation_state);
+    set_next_simulation_state(
+        true,
+        &mut text_table,
+        &simulation_state,
+        &mut next_simulation_state,
+    );
     set_next_trajectory_mode(true, &mut text_table, &mut trajectory_mode);
     set_next_grid_mode(true, &mut text_table, materials);
 }
@@ -160,7 +190,12 @@ fn button_observer(
 
     match button_event.0 {
         ButtonId(SIMULATION_STATE_BUTTON_ID) => {
-            set_next_simulation_state(false, &mut text_table, &simulation_state, &mut next_simulation_state);
+            set_next_simulation_state(
+                false,
+                &mut text_table,
+                &simulation_state,
+                &mut next_simulation_state,
+            );
         }
         ButtonId(TRAJECTORY_MODE_BUTTON_ID) => {
             set_next_trajectory_mode(false, &mut text_table, &mut trajectory_mode);
@@ -168,7 +203,7 @@ fn button_observer(
         ButtonId(GRID_MODE_BUTTON_ID) => {
             set_next_grid_mode(false, &mut text_table, materials);
         }
-        _ => ()
+        _ => (),
     }
 }
 
@@ -198,7 +233,7 @@ fn slider_observer(
             let mat = materials.iter_mut().next().unwrap().1;
             mat.gravity_src_buffer.lagrange_threshold = lagrange_threshold;
         }
-        _ => ()
+        _ => (),
     }
 }
 
@@ -212,11 +247,16 @@ fn set_next_simulation_state(
     simulation_state = if reset {
         default()
     } else {
-        SimulationState::from_repr((simulation_state as usize + 1) % SimulationState::COUNT).unwrap()
+        SimulationState::from_repr((simulation_state as usize + 1) % SimulationState::COUNT)
+            .unwrap()
     };
     next_simulation_state.set(simulation_state);
 
-    set_text(SIMULATION_STATE_BUTTON_ID, SimulationState::VARIANTS[simulation_state as usize].into(), text_table);
+    set_text(
+        SIMULATION_STATE_BUTTON_ID,
+        SimulationState::VARIANTS[simulation_state as usize].into(),
+        text_table,
+    );
 }
 
 fn set_next_trajectory_mode(
@@ -230,7 +270,11 @@ fn set_next_trajectory_mode(
         TrajectoryMode::from_repr((**trajectory_mode as usize + 1) % TrajectoryMode::COUNT).unwrap()
     };
 
-    set_text(TRAJECTORY_MODE_BUTTON_ID, TrajectoryMode::VARIANTS[**trajectory_mode as usize].into(), text_table);
+    set_text(
+        TRAJECTORY_MODE_BUTTON_ID,
+        TrajectoryMode::VARIANTS[**trajectory_mode as usize].into(),
+        text_table,
+    );
 }
 
 fn set_next_grid_mode(
@@ -245,5 +289,9 @@ fn set_next_grid_mode(
         (mat.grid_mode + 1) % GridMode::COUNT as u32
     };
 
-    set_text(GRID_MODE_BUTTON_ID, GridMode::VARIANTS[mat.grid_mode as usize].into(), text_table);
+    set_text(
+        GRID_MODE_BUTTON_ID,
+        GridMode::VARIANTS[mat.grid_mode as usize].into(),
+        text_table,
+    );
 }
