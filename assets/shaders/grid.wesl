@@ -1,4 +1,4 @@
-#import bevy_pbr::forward_io::VertexOutput
+import bevy_pbr::render::forward_io::VertexOutput;
 
 const SPACE_GRID_PERIOD = 50.0;
 const SPACE_GRID_SIZE = 0.5;
@@ -26,9 +26,9 @@ struct GravitySrcBuffer {
     lagrange_threshold: f32,
 }
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> grid_mode: u32;
-@group(#{MATERIAL_BIND_GROUP}) @binding(1) var<uniform> camera_settings: CameraSettings;
-@group(#{MATERIAL_BIND_GROUP}) @binding(2) var<uniform> gravity_src_buffer: GravitySrcBuffer;
+@group(constants::MATERIAL_BIND_GROUP) @binding(0) var<uniform> grid_mode: u32;
+@group(constants::MATERIAL_BIND_GROUP) @binding(1) var<uniform> camera_settings: CameraSettings;
+@group(constants::MATERIAL_BIND_GROUP) @binding(2) var<uniform> gravity_src_buffer: GravitySrcBuffer;
 
 fn space(
     world_pos: vec2<f32>,

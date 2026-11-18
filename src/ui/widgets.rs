@@ -1,10 +1,11 @@
 use bevy::{
     picking::hover::Hovered,
-    platform::collections::HashMap,
+    platform::collections::{HashMap, HashSet},
     prelude::*,
+    ui::{InteractionDisabled, Pressed},
     ui_widgets::{
-        CoreSliderDragState, Slider, SliderPlugin, SliderRange, SliderThumb, SliderValue,
-        TrackClick, observe, slider_self_update,
+        observe, slider_self_update, Button, Slider, SliderDragState, SliderOrientation,
+        SliderRange, SliderThumb, SliderValue, TrackClick,
     },
 };
 
@@ -86,6 +87,7 @@ pub fn button_bundle(id: &'static str, button_style: &ButtonStyle) -> impl Bundl
         ButtonId(id),
         ButtonPressState::default(),
         Button,
+        Hovered::default(),
         BackgroundColor(button_style.background.normal),
         *button_style,
         children![text_bundle(id, TextStyle(button_style.text)),],
@@ -107,6 +109,7 @@ pub fn slider_bundle(id: &'static str, slider_style: &SliderStyle) -> impl Bundl
         SliderId(id),
         Slider {
             track_click: TrackClick::Snap,
+            orientation: SliderOrientation::Horizontal,
         },
         SliderValue(0.5),
         SliderRange::new(0.0, 1.0),
@@ -159,14 +162,12 @@ pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(SliderPlugin)
-            .init_resource::<TextTable>()
-            .add_systems(
-                Update,
-                (update_ui_buttons, update_ui_sliders, update_ui_text)
-                    .chain()
-                    .in_set(AppSet::Ui),
-            );
+        app.init_resource::<TextTable>().add_systems(
+            Update,
+            (update_ui_buttons, update_ui_sliders, update_ui_text)
+                .chain()
+                .in_set(AppSet::Ui),
+        );
     }
 }
 
@@ -174,42 +175,88 @@ fn update_ui_buttons(
     mut commands: Commands,
     mut button_query: Query<
         (
-            &Interaction,
+            Entity,
+            Option<Ref<InteractionDisabled>>,
+            Option<Ref<Pressed>>,
+            Ref<Hovered>,
             &ButtonId,
             &mut ButtonPressState,
-            &mut Button,
             &mut BackgroundColor,
             &ButtonStyle,
             &Children,
         ),
-        Changed<Interaction>,
+        With<Button>,
     >,
-    mut button_text_query: Query<(&mut TextColor,)>,
+    mut released_buttons: RemovedComponents<Pressed>,
+    mut reenabled_buttons: RemovedComponents<InteractionDisabled>,
+    mut button_text_query: Query<&mut TextColor>,
 ) {
+    let restyle: HashSet<Entity> = released_buttons
+        .read()
+        .chain(reenabled_buttons.read())
+        .collect();
+
     for (
-        interaction,
+        entity,
+        disabled,
+        pressed,
+        hovered,
         button_id,
         mut button_press_state,
-        mut button,
         mut background_color,
         button_style,
         children,
     ) in &mut button_query
     {
-        let (mut button_text_color,) = button_text_query.get_mut(children[0]).unwrap();
-        (background_color.0, button_text_color.0) = match *interaction {
-            Interaction::Pressed => (button_style.background.pressed, button_style.text.pressed),
-            Interaction::Hovered => (button_style.background.hovered, button_style.text.hovered),
-            Interaction::None => (button_style.background.normal, button_style.text.normal),
-        };
-        button.set_changed();
-
-        let pressed = *interaction == Interaction::Pressed;
-        let was_pressed = button_press_state.0;
-        if pressed != was_pressed {
-            button_press_state.0 = pressed;
-            commands.trigger(ButtonEvent(*button_id, pressed));
+        let changed = hovered.is_changed()
+            || pressed.is_some_and(|pressed| pressed.is_added())
+            || disabled.is_some_and(|disabled| disabled.is_added())
+            || restyle.contains(&entity);
+        if !changed {
+            continue;
         }
+
+        sync_button(
+            &mut commands,
+            &mut button_text_query,
+            disabled.is_some(),
+            pressed.is_some(),
+            hovered.get(),
+            *button_id,
+            &mut button_press_state,
+            &mut background_color,
+            button_style,
+            children,
+        );
+    }
+}
+
+fn sync_button(
+    commands: &mut Commands,
+    button_text_query: &mut Query<&mut TextColor>,
+    disabled: bool,
+    pressed: bool,
+    hovered: bool,
+    button_id: ButtonId,
+    button_press_state: &mut ButtonPressState,
+    background_color: &mut BackgroundColor,
+    button_style: &ButtonStyle,
+    children: &Children,
+) {
+    let mut button_text_color = button_text_query.get_mut(children[0]).unwrap();
+    (background_color.0, button_text_color.0) = if disabled {
+        (button_style.background.disabled, button_style.text.disabled)
+    } else if pressed {
+        (button_style.background.pressed, button_style.text.pressed)
+    } else if hovered {
+        (button_style.background.hovered, button_style.text.hovered)
+    } else {
+        (button_style.background.normal, button_style.text.normal)
+    };
+
+    if pressed != button_press_state.0 {
+        button_press_state.0 = pressed;
+        commands.trigger(ButtonEvent(button_id, pressed));
     }
 }
 
@@ -221,17 +268,33 @@ fn update_ui_sliders(
             &SliderId,
             &SliderValue,
             &SliderRange,
-            &CoreSliderDragState,
+            &SliderDragState,
             &Hovered,
+            Has<InteractionDisabled>,
             &SliderStyle,
         ),
         (
             Or<(
                 Changed<SliderValue>,
-                Changed<CoreSliderDragState>,
+                Changed<SliderDragState>,
                 Changed<Hovered>,
+                Added<InteractionDisabled>,
             )>,
         ),
+    >,
+    mut reenabled_sliders: RemovedComponents<InteractionDisabled>,
+    restyle_query: Query<
+        (
+            Entity,
+            &SliderId,
+            &SliderValue,
+            &SliderRange,
+            &SliderDragState,
+            &Hovered,
+            Has<InteractionDisabled>,
+            &SliderStyle,
+        ),
+        With<Slider>,
     >,
     children: Query<&Children>,
     mut slider_thumb_query: Query<(&mut Node, &mut BackgroundColor), With<SliderThumb>>,
@@ -243,29 +306,86 @@ fn update_ui_sliders(
         slider_range,
         slider_drag_state,
         slider_hovered,
+        slider_disabled,
         slider_style,
     ) in slider_query.iter()
     {
-        for child in children.iter_descendants(entity) {
-            if let Ok((mut slider_thumb_node, mut slider_thumb_color)) =
-                slider_thumb_query.get_mut(child)
-            {
-                let pressed = slider_drag_state.dragging;
-                slider_thumb_color.0 = if pressed {
-                    slider_style.thumb.pressed
-                } else {
-                    if slider_hovered.0 {
-                        slider_style.thumb.hovered
-                    } else {
-                        slider_style.thumb.normal
-                    }
-                };
+        sync_slider(
+            &mut commands,
+            &children,
+            &mut slider_thumb_query,
+            entity,
+            *slider_id,
+            slider_value,
+            slider_range,
+            slider_drag_state,
+            slider_hovered,
+            slider_disabled,
+            slider_style,
+        );
+    }
 
-                slider_thumb_node.left =
-                    percent(slider_range.thumb_position(slider_value.0) * 100.0);
+    for entity in reenabled_sliders.read() {
+        let Ok((
+            entity,
+            slider_id,
+            slider_value,
+            slider_range,
+            slider_drag_state,
+            slider_hovered,
+            slider_disabled,
+            slider_style,
+        )) = restyle_query.get(entity)
+        else {
+            continue;
+        };
 
-                commands.trigger(SliderEvent(*slider_id, slider_value.0));
-            }
+        sync_slider(
+            &mut commands,
+            &children,
+            &mut slider_thumb_query,
+            entity,
+            *slider_id,
+            slider_value,
+            slider_range,
+            slider_drag_state,
+            slider_hovered,
+            slider_disabled,
+            slider_style,
+        );
+    }
+}
+
+fn sync_slider(
+    commands: &mut Commands,
+    children: &Query<&Children>,
+    slider_thumb_query: &mut Query<(&mut Node, &mut BackgroundColor), With<SliderThumb>>,
+    entity: Entity,
+    slider_id: SliderId,
+    slider_value: &SliderValue,
+    slider_range: &SliderRange,
+    slider_drag_state: &SliderDragState,
+    slider_hovered: &Hovered,
+    slider_disabled: bool,
+    slider_style: &SliderStyle,
+) {
+    for child in children.iter_descendants(entity) {
+        if let Ok((mut slider_thumb_node, mut slider_thumb_color)) =
+            slider_thumb_query.get_mut(child)
+        {
+            slider_thumb_color.0 = if slider_disabled {
+                slider_style.thumb.disabled
+            } else if slider_drag_state.dragging {
+                slider_style.thumb.pressed
+            } else if slider_hovered.get() {
+                slider_style.thumb.hovered
+            } else {
+                slider_style.thumb.normal
+            };
+
+            slider_thumb_node.left = percent(slider_range.thumb_position(slider_value.0) * 100.0);
+
+            commands.trigger(SliderEvent(slider_id, slider_value.0));
         }
     }
 }

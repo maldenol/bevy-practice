@@ -79,7 +79,7 @@ pub struct GridMaterial {
 
 impl Material for GridMaterial {
     fn fragment_shader() -> ShaderRef {
-        "shaders/grid.wgsl".into()
+        "shaders/grid.wesl".into()
     }
 
     fn alpha_mode(&self) -> AlphaMode {
